@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Configure IT Assets Map</title>
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body class="config-body">
+  <header class="app-header">
+    <div class="title-group">
+      <h1>Configure Assets</h1>
+      <p class="subtitle">Add your IT assets and their locations to build the map.</p>
+    </div>
+    <a href="/" class="secondary">Back to Map</a>
+  </header>
+
+  <main class="content config-content">
+    <form id="config-form" class="config-form">
+      <section>
+        <label for="map-title" class="input-label">Map Title</label>
+        <input id="map-title" name="title" type="text" required placeholder="Example: North America Infrastructure" />
+      </section>
+
+      <section class="assets-section">
+        <div class="assets-header">
+          <h2>Assets</h2>
+          <button type="button" id="add-asset" class="primary">Add Asset</button>
+        </div>
+        <p class="helper-text">Provide the city and state for each asset. Notes are optional.</p>
+        <div id="assets-container" class="assets-container"></div>
+      </section>
+
+      <div class="actions">
+        <button type="submit" class="primary">Save Assets</button>
+      </div>
+    </form>
+  </main>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="/static/js/configure.js" defer></script>
+</body>
+</html>

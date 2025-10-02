@@ -1,0 +1,13 @@
+{
+  "name": "map-view",
+  "version": "1.0.0",
+  "description": "IT Assets Map web app",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4"
+  }
+}

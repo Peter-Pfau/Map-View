@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IT Assets Map</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
+  <link rel="stylesheet" href="/static/css/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="title-group">
+      <h1 id="map-title">IT Assets Map</h1>
+      <p class="subtitle">Visualize where your infrastructure lives.</p>
+    </div>
+    <button id="edit-config" class="secondary">Configure Assets</button>
+  </header>
+
+  <main class="content">
+    <section class="map-panel">
+      <div id="map" class="map"></div>
+    </section>
+    <section class="list-panel">
+      <h2>Assets</h2>
+      <ul id="assets-list" class="assets-list"></ul>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+  <script src="/static/js/main.js" defer></script>
+</body>
+</html>
