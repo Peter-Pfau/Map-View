@@ -1,0 +1,4 @@
+# Ignore local asset data
+/data/*
+!/data/.gitkeep
+
