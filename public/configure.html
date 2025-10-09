@@ -13,7 +13,12 @@
       <h1>Configure Assets</h1>
       <p class="subtitle">Add your IT assets and their locations to build the map.</p>
     </div>
-    <a href="/" class="secondary">Back to Map</a>
+    <div class="header-actions">
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Toggle color mode">
+        <span class="theme-toggle__label">Dark mode</span>
+      </button>
+      <a href="/" class="secondary">Back to Map</a>
+    </div>
   </header>
 
   <main class="content config-content">
@@ -26,7 +31,13 @@
       <section class="assets-section">
         <div class="assets-header">
           <h2>Assets</h2>
-          <button type="button" id="add-asset" class="primary">Add Asset</button>
+          <div class="assets-actions">
+            <input id="import-file" type="file" accept=".json,.csv" hidden />
+            <button type="button" id="import-assets" class="secondary">Import CSV/JSON</button>
+            <button type="button" id="export-json" class="secondary">Export JSON</button>
+            <button type="button" id="export-csv" class="secondary">Export CSV</button>
+            <button type="button" id="add-asset" class="primary">Add Asset</button>
+          </div>
         </div>
         <p class="helper-text">Provide the city and state for each asset. Notes are optional.</p>
         <div id="assets-container" class="assets-container"></div>
@@ -40,6 +51,7 @@
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
+  <script src="/static/js/theme.js" defer></script>
   <script src="/static/js/configure.js" defer></script>
 </body>
 </html>

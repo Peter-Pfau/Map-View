@@ -14,7 +14,19 @@
       <h1 id="map-title">IT Assets Map</h1>
       <p class="subtitle">Visualize where your infrastructure lives.</p>
     </div>
-    <button id="edit-config" class="secondary">Configure Assets</button>
+    <div class="header-actions">
+      <button id="theme-toggle" class="theme-toggle" type="button" aria-pressed="false" aria-label="Toggle color mode">
+        <span class="theme-toggle__label">Dark mode</span>
+      </button>
+      <div class="actions-menu">
+        <button id="actions-toggle" class="menu-toggle" aria-haspopup="true" aria-expanded="false" aria-label="Open actions menu">
+          <span aria-hidden="true">&#8942;</span>
+        </button>
+        <div id="actions-menu" class="menu-dropdown" role="menu" aria-hidden="true">
+          <button class="menu-item" data-action="configure" role="menuitem">Configure Assets</button>
+        </div>
+      </div>
+    </div>
   </header>
 
   <main class="content">
@@ -30,6 +42,7 @@
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
   <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+  <script src="/static/js/theme.js" defer></script>
   <script src="/static/js/main.js" defer></script>
 </body>
 </html>
