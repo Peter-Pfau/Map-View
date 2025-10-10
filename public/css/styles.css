@@ -157,6 +157,13 @@ body {
   border-radius: 50%;
   box-shadow: none;
   cursor: pointer;
+  transition: opacity 180ms ease, transform 200ms ease;
+}
+
+.asset-cluster--expanded {
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.75);
 }
 
 .asset-cluster__inner {

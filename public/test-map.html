@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Map Test - Multiple Assets Click Handler</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; }
+    #map { height: 100vh; }
+    .test-controls {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      background: white;
+      padding: 10px;
+      border-radius: 5px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    }
+    .asset-cluster {
+      background: #3388ff;
+      border: 2px solid #fff;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    }
+    .asset-cluster--expanded {
+      background: #ff6b35;
+      transform: scale(1.1);
+    }
+    .asset-cluster__inner {
+      font-size: 14px;
+    }
+    .test-log {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 10px;
+      border-radius: 5px;
+      max-width: 300px;
+      max-height: 200px;
+      overflow-y: auto;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-controls">
+    <h3>Test Controls</h3>
+    <button onclick="loadTestData()">Load Test Data</button>
+    <button onclick="clearLog()">Clear Log</button>
+    <p>Click on circles with numbers to expand into individual pins</p>
+  </div>
+  
+  <div id="map"></div>
+  
+  <div id="test-log" class="test-log">
+    <div>Test log:</div>
+  </div>
+
+  <script src="/static/vendor/leaflet/leaflet.js"></script>
+  <script>
+    // Test data with multiple assets in same cities
+    const testData = {
+      title: "Test Map",
+      assets: [
+        { name: "Server 1", city: "New York", state: "NY", notes: "Primary server" },
+        { name: "Server 2", city: "New York", state: "NY", notes: "Backup server" },
+        { name: "Server 3", city: "New York", state: "NY", notes: "Database server" },
+        { name: "Router 1", city: "Los Angeles", state: "CA", notes: "Main router" },
+        { name: "Router 2", city: "Los Angeles", state: "CA", notes: "Backup router" },
+        { name: "Switch 1", city: "Chicago", state: "IL", notes: "Core switch" }
+      ]
+    };
+
+    let map;
+    let activeDetailLayer = null;
+    let activeGroupKey = null;
+
+    function log(message) {
+      const logEl = document.getElementById('test-log');
+      const div = document.createElement('div');
+      div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearLog() {
+      const logEl = document.getElementById('test-log');
+      logEl.innerHTML = '<div>Test log:</div>';
+    }
+
+    async function loadTestData() {
+      try {
+        log('Loading test data...');
+        await initializeMap(testData);
+        log('Test data loaded successfully');
+      } catch (error) {
+        log(`❌ ERROR loading test data: ${error.message}`);
+        console.error('Test data loading error:', error);
+      }
+    }
+
+    // Copy the main functions from main.js for testing
+    const DEFAULT_CENTER = [39.5, -98.35];
+    const DEFAULT_ZOOM = 4;
+
+    async function geocodeAsset(city, state) {
+      // Mock geocoding for testing
+      const mockCoords = {
+        'New York, NY': [40.7128, -74.0060],
+        'Los Angeles, CA': [34.0522, -118.2437],
+        'Chicago, IL': [41.8781, -87.6298]
+      };
+      const key = `${city}, ${state}`;
+      return mockCoords[key] || null;
+    }
+
+    function formatCoordinateKey(coords) {
+      return coords.map(value => Number(value).toFixed(6)).join(',');
+    }
+
+    function buildGroupIcon(count) {
+      if (count <= 1) {
+        return null;
+      }
+      return L.divIcon({
+        html: `<span class="asset-cluster__inner">${count}</span>`,
+        className: 'asset-cluster',
+        iconSize: [38, 38],
+        iconAnchor: [19, 19],
+        popupAnchor: [0, -16]
+      });
+    }
+
+    function buildPopupHtml(assets) {
+      if (!Array.isArray(assets) || assets.length === 0) {
+        return 'No asset details available.';
+      }
+      if (assets.length === 1) {
+        const asset = assets[0];
+        const base = `<strong>${asset.name}</strong><br/>${asset.city}, ${asset.state}`;
+        return asset.notes ? `${base}<br/><em>${asset.notes}</em>` : base;
+      }
+      const location = [assets[0].city, assets[0].state].filter(Boolean).join(', ');
+      const list = assets
+        .map(asset => {
+          const notes = asset.notes ? ` - ${asset.notes}` : '';
+          return `<li><strong>${asset.name}</strong>${notes}</li>`;
+        })
+        .join('');
+      const locationLine = location ? `${location}<br/>` : '';
+      return `<strong>${assets.length} assets</strong><br/>${locationLine}<ul class='popup-asset-list'>${list}</ul>`;
+    }
+
+    function fanOutCoordinates(map, center, count) {
+      if (count <= 1) {
+        return [center];
+      }
+      const zoom = map.getZoom();
+      const centerLatLng = L.latLng(center[0], center[1]);
+      const centerPoint = map.project(centerLatLng, zoom);
+      const radius = Math.max(40, Math.min(90, 30 + count * 12));
+      const angleStep = (2 * Math.PI) / count;
+      const positions = [];
+
+      for (let i = 0; i < count; i += 1) {
+        const angle = angleStep * i;
+        const offsetX = radius * Math.cos(angle);
+        const offsetY = radius * Math.sin(angle);
+        const point = centerPoint.add([offsetX, offsetY]);
+        const unprojected = map.unproject(point, zoom);
+        positions.push([unprojected.lat, unprojected.lng]);
+      }
+
+      return positions;
+    }
+
+    function setClusterMarkerExpanded(marker, shouldExpand) {
+      if (!marker) {
+        return;
+      }
+      const element = marker.getElement();
+      if (!element) {
+        return;
+      }
+      element.classList.toggle('asset-cluster--expanded', shouldExpand);
+      element.setAttribute('aria-hidden', shouldExpand ? 'true' : 'false');
+    }
+
+    function handleGroupClick(map, groupedAssets, key, overviewBounds) {
+      log(`=== GROUP CLICK HANDLER STARTED ===`);
+      log(`Group click detected for key: ${key}`);
+      const group = groupedAssets.get(key);
+      if (!group) {
+        log('❌ Group not found!');
+        return;
+      }
+
+      log(`✓ Group found with ${group.assets.length} assets`);
+
+      if (group.assets.length <= 1) {
+        log('Single asset - opening popup');
+        collapseDetailLayer(map, groupedAssets, overviewBounds);
+        group.marker?.openPopup();
+        return;
+      }
+
+      if (activeGroupKey === key) {
+        log('Same group already active - collapsing');
+        collapseDetailLayer(map, groupedAssets, overviewBounds);
+        return;
+      }
+
+      log('🔄 Expanding group to show individual pins...');
+      collapseDetailLayer(map, groupedAssets, overviewBounds);
+
+      log(`About to generate fan-out coordinates for ${group.assets.length} assets...`);
+      const fanCoords = fanOutCoordinates(map, group.coords, group.assets.length);
+      log(`📍 Generated ${fanCoords.length} fan-out coordinates:`);
+      try {
+        fanCoords.forEach((coord, i) => log(`  ${i}: [${coord[0].toFixed(4)}, ${coord[1].toFixed(4)}]`));
+      } catch (error) {
+        log(`❌ Error displaying coordinates: ${error.message}`);
+      }
+      
+      const detailMarkers = fanCoords.map((coords, index) => {
+        const asset = group.assets[index];
+        const marker = L.marker(coords, { riseOnHover: true });
+        marker.bindPopup(buildPopupHtml([asset]));
+        marker.on('click', event => {
+          event.originalEvent?.stopPropagation();
+        });
+        marker.setZIndexOffset(400);
+        log(`Created detail marker ${index} for ${asset.name} at [${coords[0].toFixed(4)}, ${coords[1].toFixed(4)}]`);
+        return marker;
+      });
+
+      activeDetailLayer = L.layerGroup(detailMarkers).addTo(map);
+      activeGroupKey = key;
+      log(`✅ Added ${detailMarkers.length} detail markers to map`);
+      
+      if (group.marker) {
+        setClusterMarkerExpanded(group.marker, true);
+        group.marker.closeTooltip?.();
+        group.marker.closePopup();
+        log('✓ Set cluster marker as expanded');
+      }
+
+      const detailBounds = L.latLngBounds(fanCoords.concat([group.coords]));
+      log(`🎯 Flying to bounds: ${detailBounds.toBBoxString()}`);
+      map.flyToBounds(detailBounds, {
+        padding: [60, 60],
+        maxZoom: Math.max(map.getZoom(), 15),
+        animate: true
+      });
+      log(`=== GROUP CLICK HANDLER COMPLETED ===`);
+    }
+
+    function collapseDetailLayer(map, groupedAssets, overviewBounds) {
+      const hadDetailLayer = Boolean(activeDetailLayer);
+
+      if (activeDetailLayer) {
+        log('Removing detail layer');
+        map.removeLayer(activeDetailLayer);
+        activeDetailLayer = null;
+      }
+      if (activeGroupKey) {
+        const activeGroup = groupedAssets.get(activeGroupKey);
+        if (activeGroup && activeGroup.marker) {
+          setClusterMarkerExpanded(activeGroup.marker, false);
+        }
+      }
+      activeGroupKey = null;
+
+      if (hadDetailLayer && overviewBounds && groupedAssets.size > 0) {
+        map.flyToBounds(overviewBounds, {
+          padding: [60, 60],
+          maxZoom: Math.max(map.getZoom(), 12),
+          animate: true
+        });
+      }
+    }
+
+    async function initializeMap(data) {
+      if (map) {
+        map.remove();
+      }
+
+      map = L.map('map', {
+        zoomControl: true,
+        scrollWheelZoom: true
+      }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
+      }).addTo(map);
+
+      const bounds = L.latLngBounds();
+      const groupedAssets = new Map();
+
+      for (const asset of data.assets) {
+        try {
+          const coords = await geocodeAsset(asset.city, asset.state);
+          if (coords) {
+            const key = formatCoordinateKey(coords);
+            const group = groupedAssets.get(key) || { coords, assets: [] };
+            group.assets.push(asset);
+            groupedAssets.set(key, group);
+            log(`Added ${asset.name} to group ${key}`);
+          } else {
+            log(`No coordinates found for ${asset.name}`);
+          }
+        } catch (err) {
+          log(`Geocoding error: ${err.message}`);
+        }
+      }
+
+      for (const [key, group] of groupedAssets.entries()) {
+        const markerOptions = {};
+        const groupIcon = buildGroupIcon(group.assets.length);
+        if (groupIcon) {
+          markerOptions.icon = groupIcon;
+          log(`Created cluster icon for ${group.assets.length} assets at ${key}`);
+        }
+        const marker = L.marker(group.coords, markerOptions).addTo(map);
+        group.marker = marker;
+        
+        if (group.assets.length === 1) {
+          marker.bindPopup(buildPopupHtml(group.assets));
+        } else {
+          marker.bindTooltip(`${group.assets.length} assets`, { direction: 'top', offset: [0, -12] });
+        }
+        
+        bounds.extend(group.coords);
+        log(`Added marker for group ${key} at coordinates [${group.coords}]`);
+      }
+
+      log(`About to create overview bounds...`);
+      const overviewBounds = L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
+      log(`Overview bounds created successfully. Setting up click handlers for ${groupedAssets.size} groups...`);
+
+      // Add click handlers after overviewBounds is defined
+      try {
+        for (const [key, group] of groupedAssets.entries()) {
+          log(`Adding click handler for group ${key} with ${group.assets.length} assets`);
+          if (!group.marker) {
+            log(`❌ ERROR: No marker found for group ${key}!`);
+            continue;
+          }
+          
+          group.marker.on('click', event => {
+            log(`Click event fired for group ${key}!`);
+            if (event.originalEvent) {
+              event.originalEvent.preventDefault();
+              event.originalEvent.stopPropagation();
+              event.originalEvent.stopImmediatePropagation();
+            }
+            // Also stop Leaflet event propagation
+            L.DomEvent.stopPropagation(event);
+            handleGroupClick(map, groupedAssets, key, overviewBounds);
+          });
+          
+          // Also add a simple test click handler
+          group.marker.on('click', () => {
+            log(`Simple click handler fired for group ${key}`);
+          });
+          
+          log(`✓ Click handlers attached for group ${key}`);
+        }
+        
+        log(`Click handlers setup complete for all ${groupedAssets.size} groups`);
+      } catch (error) {
+        log(`❌ ERROR in click handler setup: ${error.message}`);
+        console.error('Click handler setup error:', error);
+      }
+
+      map.on('click', (event) => {
+        log(`Map click detected at ${event.latlng}`);
+        collapseDetailLayer(map, groupedAssets, overviewBounds);
+      });
+
+      const markerCount = groupedAssets.size;
+      if (markerCount > 0) {
+        log(`Bounds before fitting: ${bounds.toBBoxString()}`);
+        map.fitBounds(bounds.pad(0.2));
+        log(`Map initialized with ${markerCount} marker groups`);
+        log(`Current map center: ${map.getCenter()}, zoom: ${map.getZoom()}`);
+      } else {
+        map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+        log('No markers to display');
+      }
+    }
+
+    // Initialize empty map on load
+    window.addEventListener('load', () => {
+      map = L.map('map').setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+      log('Test page loaded. Click "Load Test Data" to test functionality.');
+    });
+  </script>
+</body>
+</html>

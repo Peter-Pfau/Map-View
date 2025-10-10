@@ -39,6 +39,10 @@ const server = http.createServer(async (req, res) => {
       return serveStaticFile(res, path.join(PUBLIC_DIR, 'configure.html'));
     }
 
+    if (req.method === 'GET' && pathname === '/test-map.html') {
+      return serveStaticFile(res, path.join(PUBLIC_DIR, 'test-map.html'));
+    }
+
     if (req.method === 'GET' && pathname === '/api/assets') {
       if (!fs.existsSync(DATA_FILE)) {
         res.writeHead(404, { 'Content-Type': 'application/json' });

@@ -220,15 +220,23 @@
       } else {
         marker.bindTooltip(`${group.assets.length} assets`, { direction: 'top', offset: [0, -12] });
       }
-      marker.on('click', event => {
-        event.originalEvent?.preventDefault();
-        event.originalEvent?.stopPropagation();
-        handleGroupClick(map, groupedAssets, key, overviewBounds);
-      });
       bounds.extend(group.coords);
     }
 
-    const overviewBounds = bounds.clone();
+    const overviewBounds = L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
+
+    for (const [key, group] of groupedAssets.entries()) {
+      group.marker.on('click', event => {
+        if (event.originalEvent) {
+          event.originalEvent.preventDefault();
+          event.originalEvent.stopPropagation();
+          event.originalEvent.stopImmediatePropagation();
+        }
+        // Also stop Leaflet event propagation
+        L.DomEvent.stopPropagation(event);
+        handleGroupClick(map, groupedAssets, key, overviewBounds);
+      });
+    }
 
     map.on('click', () => collapseDetailLayer(map, groupedAssets, overviewBounds));
 
@@ -370,7 +378,8 @@
     activeDetailLayer = L.layerGroup(detailMarkers).addTo(map);
     activeGroupKey = key;
     if (group.marker) {
-      group.marker.setOpacity(0.25);
+      setClusterMarkerExpanded(group.marker, true);
+      group.marker.closeTooltip?.();
       group.marker.closePopup();
     }
 
@@ -392,7 +401,7 @@
     if (activeGroupKey) {
       const activeGroup = groupedAssets.get(activeGroupKey);
       if (activeGroup && activeGroup.marker) {
-        activeGroup.marker.setOpacity(1);
+        setClusterMarkerExpanded(activeGroup.marker, false);
       }
     }
     activeGroupKey = null;
@@ -404,6 +413,18 @@
         animate: true
       });
     }
+  }
+
+  function setClusterMarkerExpanded(marker, shouldExpand) {
+    if (!marker) {
+      return;
+    }
+    const element = marker.getElement();
+    if (!element) {
+      return;
+    }
+    element.classList.toggle('asset-cluster--expanded', shouldExpand);
+    element.setAttribute('aria-hidden', shouldExpand ? 'true' : 'false');
   }
 
   function fanOutCoordinates(map, center, count) {
@@ -422,7 +443,8 @@
       const offsetX = radius * Math.cos(angle);
       const offsetY = radius * Math.sin(angle);
       const point = centerPoint.add([offsetX, offsetY]);
-      positions.push(map.unproject(point, zoom));
+      const unprojected = map.unproject(point, zoom);
+      positions.push([unprojected.lat, unprojected.lng]);
     }
 
     return positions;
