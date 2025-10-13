@@ -15,12 +15,20 @@
   const listEl = document.getElementById('assets-list');
   const actionsToggle = document.getElementById('actions-toggle');
   const actionsMenu = document.getElementById('actions-menu');
+  const assetListOverlay = document.getElementById('asset-list-overlay');
+  const assetListCloseButton = document.getElementById('asset-list-close');
 
   if (actionsToggle && actionsMenu) {
     actionsToggle.addEventListener('click', toggleMenu);
     document.addEventListener('click', handleMenuBlur);
     document.addEventListener('keydown', handleMenuKeydown);
     actionsMenu.addEventListener('click', handleMenuSelection);
+  }
+
+  assetListCloseButton?.addEventListener('click', closeAssetListOverlay);
+  assetListOverlay?.addEventListener('click', handleAssetListOverlayClick);
+  if (assetListOverlay) {
+    document.addEventListener('keydown', handleAssetListKeydown);
   }
 
   fetchAssets();
@@ -103,6 +111,9 @@
     if (action === 'configure') {
       window.location.href = '/configure';
     }
+    if (action === 'list') {
+      openAssetListOverlay();
+    }
   }
   async function fetchAssets() {
     try {
@@ -115,16 +126,55 @@
         throw new Error(`Unexpected response: ${response.status}`);
       }
 
-      const data = await response.json();
-      renderTitle(data.title);
-      renderAssetsList(data.assets);
-      initializeMap(data);
+      const rawData = await response.json();
+      const resolvedData = await resolveAssetSource(rawData);
+      renderTitle(resolvedData.title);
+      renderAssetsList(resolvedData.assets, resolvedData.remoteSource);
+      initializeMap(resolvedData);
     } catch (err) {
       console.error('Failed to load assets:', err);
       showToast('Unable to load assets. Try refreshing or reconfiguring.', true);
       if (listEl) {
         listEl.innerHTML = '<li class="asset-card">No assets available. Please configure your map.</li>';
       }
+    }
+  }
+
+  function openAssetListOverlay() {
+    if (!assetListOverlay) {
+      return;
+    }
+    assetListOverlay.setAttribute('aria-hidden', 'false');
+    assetListCloseButton?.focus();
+  }
+
+  function closeAssetListOverlay() {
+    if (!assetListOverlay || assetListOverlay.getAttribute('aria-hidden') === 'true') {
+      return;
+    }
+    assetListOverlay.setAttribute('aria-hidden', 'true');
+    actionsToggle?.focus();
+  }
+
+  function isAssetListOpen() {
+    return assetListOverlay ? assetListOverlay.getAttribute('aria-hidden') === 'false' : false;
+  }
+
+  function handleAssetListOverlayClick(event) {
+    if (!(event.target instanceof HTMLElement)) {
+      return;
+    }
+    if (event.target.dataset.overlayDismiss != null) {
+      closeAssetListOverlay();
+    }
+  }
+
+  function handleAssetListKeydown(event) {
+    if (!isAssetListOpen()) {
+      return;
+    }
+    if (event.key === 'Escape') {
+      closeAssetListOverlay();
     }
   }
 
@@ -135,21 +185,26 @@
     titleEl.textContent = title || 'IT Assets Map';
   }
 
-  function renderAssetsList(assets) {
-    if (!Array.isArray(assets) || !listEl) {
+  function renderAssetsList(assets, remoteSource) {
+    if (!listEl) {
       return;
     }
+    const safeAssets = Array.isArray(assets) ? assets : [];
     listEl.innerHTML = '';
 
-    if (assets.length === 0) {
+    if (safeAssets.length === 0) {
       const emptyItem = document.createElement('li');
       emptyItem.className = 'asset-card';
-      emptyItem.textContent = 'No assets defined yet. Add some in the configuration page.';
+      if (remoteSource && remoteSource.enabled) {
+        emptyItem.textContent = 'The configured API did not return any assets. Update the endpoint in Configure Assets.';
+      } else {
+        emptyItem.textContent = 'No assets defined yet. Add some in the configuration page.';
+      }
       listEl.appendChild(emptyItem);
       return;
     }
 
-    assets.forEach(asset => {
+    safeAssets.forEach(asset => {
       const item = document.createElement('li');
       item.className = 'asset-card';
 
@@ -171,6 +226,129 @@
 
       listEl.appendChild(item);
     });
+  }
+
+  async function resolveAssetSource(data) {
+    const remoteSource = normalizeRemoteSource(data.remoteSource);
+    const localAssets = sanitizeAssets(Array.isArray(data.assets) ? data.assets : []);
+
+    if (remoteSource.enabled) {
+      try {
+        const remoteAssets = await fetchRemoteAssets(remoteSource.url);
+        if (remoteAssets.length > 0) {
+          return {
+            ...data,
+            assets: remoteAssets,
+            remoteSource: { ...remoteSource, usedRemote: true }
+          };
+        }
+
+        if (localAssets.length > 0) {
+          showToast('The API returned no assets. Showing previously saved assets instead.', true);
+        } else {
+          showToast('The API returned no assets.', true);
+        }
+      } catch (err) {
+        console.error('Remote asset fetch failed:', err);
+        if (localAssets.length > 0) {
+          showToast('Unable to load assets from the configured API. Showing previously saved assets.', true);
+        } else {
+          showToast('Unable to load assets from the configured API.', true);
+        }
+      }
+    }
+
+    return {
+      ...data,
+      assets: localAssets,
+      remoteSource: { ...remoteSource, usedRemote: false }
+    };
+  }
+
+  async function fetchRemoteAssets(url) {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Remote API responded with ${response.status}`);
+    }
+    const payload = await response.json();
+    const rawAssets = extractAssetArray(payload);
+    return sanitizeAssets(rawAssets);
+  }
+
+  function extractAssetArray(payload) {
+    if (Array.isArray(payload)) {
+      return payload;
+    }
+    if (payload && typeof payload === 'object') {
+      if (Array.isArray(payload.assets)) {
+        return payload.assets;
+      }
+      const candidateKey = Object.keys(payload).find(key => Array.isArray(payload[key]));
+      if (candidateKey) {
+        return payload[candidateKey];
+      }
+    }
+    return [];
+  }
+
+  function sanitizeAssets(rawAssets) {
+    if (!Array.isArray(rawAssets)) {
+      return [];
+    }
+    const result = [];
+    rawAssets.forEach(item => {
+      if (!item || typeof item !== 'object') {
+        return;
+      }
+      const name = toCleanString(item.name);
+      const city = toCleanString(item.city);
+      const state = toCleanString(item.state);
+      const notes = toCleanString(item.notes, true);
+      if (name && city && state) {
+        result.push({ name, city, state, notes });
+      }
+    });
+    return result;
+  }
+
+  function normalizeRemoteSource(source) {
+    const normalized = {
+      enabled: false,
+      url: '',
+      usedRemote: false
+    };
+    if (!source || typeof source !== 'object') {
+      return normalized;
+    }
+    const url = typeof source.url === 'string' ? source.url.trim() : '';
+    normalized.url = url;
+    if (source.enabled && isValidHttpUrl(url)) {
+      normalized.enabled = true;
+    }
+    return normalized;
+  }
+
+  function toCleanString(value, allowEmpty) {
+    if (value == null) {
+      return allowEmpty ? '' : '';
+    }
+    const text = String(value).trim();
+    if (!text && !allowEmpty) {
+      return '';
+    }
+    return text;
+  }
+
+  function isValidHttpUrl(candidate) {
+    if (!candidate) {
+      return false;
+    }
+    try {
+      const parsed = new URL(candidate);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch (err) {
+      return false;
+    }
   }
 
   async function initializeMap(data) {
@@ -232,9 +410,22 @@
           event.originalEvent.stopPropagation();
           event.originalEvent.stopImmediatePropagation();
         }
-        // Also stop Leaflet event propagation
         L.DomEvent.stopPropagation(event);
         handleGroupClick(map, groupedAssets, key, overviewBounds);
+      });
+
+      group.marker.on('dblclick', event => {
+        if (event.originalEvent) {
+          event.originalEvent.preventDefault();
+          event.originalEvent.stopPropagation();
+          event.originalEvent.stopImmediatePropagation();
+        }
+        L.DomEvent.stopPropagation(event);
+        const suppressCollapse = activeGroupKey === key;
+        handleGroupClick(map, groupedAssets, key, overviewBounds, {
+          shouldZoom: true,
+          suppressCollapse
+        });
       });
     }
 
@@ -344,26 +535,49 @@
     return `<strong>${assets.length} assets</strong><br/>${locationLine}<ul class='popup-asset-list'>${list}</ul>`;
   }
 
-  function handleGroupClick(map, groupedAssets, key, overviewBounds) {
+  function handleGroupClick(map, groupedAssets, key, overviewBounds, options = {}) {
+    const { shouldZoom = false, suppressCollapse = false } = options;
     const group = groupedAssets.get(key);
     if (!group) {
       return;
     }
 
+    const spreadMultiplier = group.assets.length > 1 ? computeSpreadMultiplier(map, shouldZoom) : 1;
+
     if (group.assets.length <= 1) {
+      group.lastSpreadMultiplier = 1;
       collapseDetailLayer(map, groupedAssets, overviewBounds);
       group.marker?.openPopup();
+      if (shouldZoom) {
+        map.setView(group.coords, Math.max(map.getZoom(), 14), { animate: true });
+      }
       return;
     }
 
     if (activeGroupKey === key) {
+      if (suppressCollapse) {
+        if (shouldZoom) {
+          const layoutMultiplier = group.lastSpreadMultiplier || spreadMultiplier;
+          const detailBounds = computeDetailBounds(map, group, layoutMultiplier);
+          if (detailBounds) {
+            map.flyToBounds(detailBounds, {
+              padding: [60, 60],
+              maxZoom: Math.max(map.getZoom(), 15),
+              animate: true
+            });
+          }
+        }
+        return;
+      }
       collapseDetailLayer(map, groupedAssets, overviewBounds);
       return;
     }
 
     collapseDetailLayer(map, groupedAssets, overviewBounds);
 
-    const fanCoords = fanOutCoordinates(map, group.coords, group.assets.length);
+    const fanCoords = fanOutCoordinates(map, group.coords, group.assets.length, { spreadMultiplier });
+    group.lastSpreadMultiplier = spreadMultiplier;
+    const { polylines: connectors, branchLatLng } = buildConnectorPolylines(map, group.coords, fanCoords, spreadMultiplier);
     const detailMarkers = fanCoords.map((coords, index) => {
       const asset = group.assets[index];
       const marker = L.marker(coords, { riseOnHover: true });
@@ -375,7 +589,7 @@
       return marker;
     });
 
-    activeDetailLayer = L.layerGroup(detailMarkers).addTo(map);
+    activeDetailLayer = L.layerGroup(connectors.concat(detailMarkers)).addTo(map);
     activeGroupKey = key;
     if (group.marker) {
       setClusterMarkerExpanded(group.marker, true);
@@ -383,12 +597,18 @@
       group.marker.closePopup();
     }
 
-    const detailBounds = L.latLngBounds(fanCoords.concat([group.coords]));
-    map.flyToBounds(detailBounds, {
-      padding: [60, 60],
-      maxZoom: Math.max(map.getZoom(), 15),
-      animate: true
-    });
+    const boundsPoints = fanCoords.concat([group.coords]);
+    if (branchLatLng) {
+      boundsPoints.push(branchLatLng);
+    }
+    const detailBounds = L.latLngBounds(boundsPoints);
+    if (shouldZoom) {
+      map.flyToBounds(detailBounds, {
+        padding: [60, 60],
+        maxZoom: Math.max(map.getZoom(), 15),
+        animate: true
+      });
+    }
   }
 
   function collapseDetailLayer(map, groupedAssets, overviewBounds) {
@@ -402,6 +622,7 @@
       const activeGroup = groupedAssets.get(activeGroupKey);
       if (activeGroup && activeGroup.marker) {
         setClusterMarkerExpanded(activeGroup.marker, false);
+        delete activeGroup.lastSpreadMultiplier;
       }
     }
     activeGroupKey = null;
@@ -427,14 +648,19 @@
     element.setAttribute('aria-hidden', shouldExpand ? 'true' : 'false');
   }
 
-  function fanOutCoordinates(map, center, count) {
+  function fanOutCoordinates(map, center, count, options = {}) {
     if (count <= 1) {
       return [center];
     }
-    const zoom = map.getZoom();
+    const { spreadMultiplier = 1 } = options;
+    const detailZoom = Math.max(map.getZoom(), 14);
     const centerLatLng = L.latLng(center[0], center[1]);
-    const centerPoint = map.project(centerLatLng, zoom);
-    const radius = Math.max(40, Math.min(90, 30 + count * 12));
+    const centerPoint = map.project(centerLatLng, detailZoom);
+    const minRadius = 8;
+    const maxRadius = spreadMultiplier > 1 ? Math.min(64, 18 + spreadMultiplier * 14) : 24;
+    const baseRadius = (9 + count * 3.6) * spreadMultiplier;
+    const zoomModifier = detailZoom > 15 ? Math.max(0.55, 1 - (detailZoom - 15) * 0.12) : 1;
+    const radius = Math.max(minRadius, Math.min(maxRadius, Math.round(baseRadius * zoomModifier)));
     const angleStep = (2 * Math.PI) / count;
     const positions = [];
 
@@ -443,11 +669,78 @@
       const offsetX = radius * Math.cos(angle);
       const offsetY = radius * Math.sin(angle);
       const point = centerPoint.add([offsetX, offsetY]);
-      const unprojected = map.unproject(point, zoom);
+      const unprojected = map.unproject(point, detailZoom);
       positions.push([unprojected.lat, unprojected.lng]);
     }
 
     return positions;
+  }
+
+  function buildConnectorPolylines(map, center, spokeCoords, spreadMultiplier) {
+    if (!Array.isArray(spokeCoords) || spokeCoords.length <= 1) {
+      return { polylines: [], branchLatLng: null };
+    }
+    const branchLatLng = computeBranchLatLng(map, center, spokeCoords.length, spreadMultiplier);
+    if (!branchLatLng) {
+      return { polylines: [], branchLatLng: null };
+    }
+    const sharedStyle = {
+      color: '#0063b1',
+      weight: 2,
+      opacity: 0.28,
+      dashArray: '6 6',
+      interactive: false
+    };
+    const spineStyle = {
+      ...sharedStyle,
+      weight: 3,
+      opacity: 0.32,
+      dashArray: null
+    };
+    const polylines = [
+      L.polyline([center, branchLatLng], spineStyle)
+    ];
+    spokeCoords.forEach(coords => {
+      polylines.push(L.polyline([branchLatLng, coords], sharedStyle));
+    });
+    return { polylines, branchLatLng };
+  }
+
+  function computeBranchLatLng(map, center, count, spreadMultiplier = 1) {
+    if (count <= 1) {
+      return null;
+    }
+    const zoom = Math.max(map.getZoom(), 14);
+    const centerLatLng = L.latLng(center[0], center[1]);
+    const centerPoint = map.project(centerLatLng, zoom);
+    const branchScale = Math.min(3.6, 1 + (spreadMultiplier - 1) * 0.6);
+    const offsetY = (18 + Math.min(count, 5) * 4) * branchScale;
+    const branchPoint = centerPoint.add([0, offsetY]);
+    const branchLatLng = map.unproject(branchPoint, zoom);
+    return [branchLatLng.lat, branchLatLng.lng];
+  }
+
+  function computeDetailBounds(map, group, spreadMultiplier = 1) {
+    if (!group || !group.coords || !Array.isArray(group.assets) || group.assets.length <= 1) {
+      return null;
+    }
+    const coords = fanOutCoordinates(map, group.coords, group.assets.length, { spreadMultiplier });
+    const branchLatLng = computeBranchLatLng(map, group.coords, group.assets.length, spreadMultiplier);
+    const points = coords.concat([group.coords]);
+    if (branchLatLng) {
+      points.push(branchLatLng);
+    }
+  return L.latLngBounds(points);
+  }
+
+  function computeSpreadMultiplier(map, shouldZoom) {
+    const zoom = map.getZoom();
+    const base = 2.3;
+    if (shouldZoom) {
+      return base;
+    }
+    const extra = Math.max(0, 13 - zoom) * 0.28 + Math.max(0, 9 - zoom) * 0.08;
+    return Math.min(4.6, base + extra);
   }
 
   function showToast(message, isError) {

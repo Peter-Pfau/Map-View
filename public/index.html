@@ -5,6 +5,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>IT Assets Map</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
   <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="/static/css/styles.css" />
 </head>
@@ -23,6 +24,7 @@
           <span aria-hidden="true">&#8942;</span>
         </button>
         <div id="actions-menu" class="menu-dropdown" role="menu" aria-hidden="true">
+          <button class="menu-item" data-action="list" role="menuitem">Asset List</button>
           <button class="menu-item" data-action="configure" role="menuitem">Configure Assets</button>
         </div>
       </div>
@@ -31,11 +33,23 @@
 
   <main class="content">
     <section class="map-panel">
-      <div id="map" class="map"></div>
-    </section>
-    <section class="list-panel">
-      <h2>Assets</h2>
-      <ul id="assets-list" class="assets-list"></ul>
+      <div class="map-wrapper">
+        <div id="map" class="map"></div>
+        <div id="asset-list-overlay" class="asset-list-overlay" aria-hidden="true">
+          <div class="asset-list-overlay__backdrop" data-overlay-dismiss></div>
+          <aside class="asset-list-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="asset-list-title">
+            <header class="asset-list-overlay__header">
+              <h2 id="asset-list-title">Assets</h2>
+              <button id="asset-list-close" class="asset-list-overlay__close" type="button" aria-label="Close asset list">
+                <span aria-hidden="true">&times;</span>
+              </button>
+            </header>
+            <div class="asset-list-overlay__body">
+              <ul id="assets-list" class="assets-list"></ul>
+            </div>
+          </aside>
+        </div>
+      </div>
     </section>
   </main>
 

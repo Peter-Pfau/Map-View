@@ -24,6 +24,12 @@ Map-View is a lightweight Node.js application that lets you enter IT assets, per
 - Every asset requires `name`, `city`, and `state`; `notes` is optional but persisted.
 - Saving posts the payload to `/api/assets` and immediately redirects back to the map view.
 
+### Remote Asset Sources
+- Toggle **Fetch asset list from JSON API** on the configure page to sync markers from a remote endpoint.
+- When enabled, the server stores the endpoint metadata alongside any locally defined assets and validates that the URL uses `http` or `https`.
+- The map will attempt to load data from the remote URL on each visit; if the call fails it falls back to the last saved asset file.
+- For quick testing, point the field at `http://localhost:3000/api/test-assets` which returns 20 sample assets.
+
 ### Data File Format
 ```json
 {

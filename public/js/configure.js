@@ -10,8 +10,19 @@
   const importInput = document.getElementById('import-file');
   const exportJsonButton = document.getElementById('export-json');
   const exportCsvButton = document.getElementById('export-csv');
+  const remoteExportJsonButton = document.getElementById('remote-export-json');
+  const remoteExportCsvButton = document.getElementById('remote-export-csv');
+  const remoteUrlField = document.getElementById('api-url');
+  const assetsSection = document.querySelector('.assets-section');
+  const sourceTabs = Array.from(document.querySelectorAll('[data-source-tab]'));
+  const sourceTablist = document.querySelector('.source-tabs');
+  const sourcePanes = {
+    local: document.getElementById('local-source-pane'),
+    remote: document.getElementById('remote-source-pane')
+  };
 
   let assetCounter = 0;
+  let activeSource = 'local';
 
   if (!form || !addAssetButton || !assetsContainer) {
     return;
@@ -36,7 +47,134 @@
     exportCsvButton.addEventListener('click', handleExportCsv);
   }
 
+  remoteExportJsonButton?.addEventListener('click', handleExportJson);
+  remoteExportCsvButton?.addEventListener('click', handleExportCsv);
+
+  sourceTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const target = tab.dataset.sourceTab;
+      if (target === 'local' || target === 'remote') {
+        setActiveSource(target);
+      }
+    });
+  });
+  sourceTablist?.addEventListener('keydown', handleSourceTabKeydown);
+  remoteUrlField?.addEventListener('input', handleRemoteUrlInput);
+
+  syncSourceUI();
   initializeForm();
+
+  function setActiveSource(source) {
+    if (source !== 'local' && source !== 'remote') {
+      return;
+    }
+    activeSource = source;
+    syncSourceUI();
+  }
+
+  function syncSourceUI() {
+    sourceTabs.forEach(tab => {
+      const tabSource = tab.dataset.sourceTab;
+      const isActive = tabSource === activeSource;
+      tab.classList.toggle('source-tab--active', isActive);
+      tab.setAttribute('aria-selected', String(isActive));
+      tab.setAttribute('tabindex', isActive ? '0' : '-1');
+    });
+
+    Object.entries(sourcePanes).forEach(([key, pane]) => {
+      if (!pane) {
+        return;
+      }
+      const isActive = key === activeSource;
+      if (isActive) {
+        pane.removeAttribute('hidden');
+        pane.setAttribute('aria-hidden', 'false');
+      } else {
+        pane.setAttribute('hidden', 'hidden');
+        pane.setAttribute('aria-hidden', 'true');
+      }
+    });
+
+    if (remoteUrlField) {
+      remoteUrlField.required = activeSource === 'remote';
+      if (activeSource !== 'remote') {
+        remoteUrlField.setCustomValidity('');
+      }
+    }
+
+    setAssetsSectionDisabled(activeSource === 'remote');
+    handleRemoteUrlInput();
+  }
+
+  function handleSourceTabKeydown(event) {
+    if (!sourceTabs.length) {
+      return;
+    }
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') {
+      return;
+    }
+    event.preventDefault();
+    const currentIndex = sourceTabs.findIndex(tab => tab.dataset.sourceTab === activeSource);
+    if (currentIndex === -1) {
+      return;
+    }
+    const offset = event.key === 'ArrowRight' ? 1 : -1;
+    const nextIndex = (currentIndex + offset + sourceTabs.length) % sourceTabs.length;
+    const nextTab = sourceTabs[nextIndex];
+    const target = nextTab?.dataset.sourceTab;
+    if (target === 'local' || target === 'remote') {
+      setActiveSource(target);
+      nextTab.focus();
+    }
+  }
+
+  function handleRemoteUrlInput() {
+    if (!remoteUrlField) {
+      return;
+    }
+    const value = remoteUrlField.value.trim();
+    if (!value) {
+      remoteUrlField.setCustomValidity('');
+      return;
+    }
+    if (!isRemoteEnabled()) {
+      remoteUrlField.setCustomValidity('');
+      return;
+    }
+    if (isValidHttpUrl(value)) {
+      remoteUrlField.setCustomValidity('');
+    } else {
+      remoteUrlField.setCustomValidity('Enter a valid http(s) URL.');
+    }
+  }
+
+  function isRemoteEnabled() {
+    return activeSource === 'remote';
+  }
+
+  function applyRemoteConfiguration(remoteSource) {
+    const enabled = Boolean(remoteSource && remoteSource.enabled);
+    if (remoteUrlField) {
+      remoteUrlField.value = remoteSource && typeof remoteSource.url === 'string' ? remoteSource.url : '';
+    }
+    setActiveSource(enabled ? 'remote' : 'local');
+  }
+
+  function setAssetsSectionDisabled(disabled) {
+    if (!assetsSection) {
+      return;
+    }
+    assetsSection.classList.toggle('assets-section--disabled', disabled);
+    if (disabled) {
+      assetsSection.setAttribute('aria-disabled', 'true');
+    } else {
+      assetsSection.removeAttribute('aria-disabled');
+    }
+    const inputs = assetsSection.querySelectorAll('input, textarea, button');
+    inputs.forEach(control => {
+      control.disabled = disabled;
+    });
+  }
 
   async function initializeForm() {
     resetAssetRows();
@@ -44,6 +182,7 @@
     try {
       const response = await fetch('/api/assets', { cache: 'no-store' });
       if (response.status === 404) {
+        applyRemoteConfiguration(null);
         addAssetRow();
         return;
       }
@@ -55,6 +194,7 @@
       if (titleField && typeof data.title === 'string') {
         titleField.value = data.title;
       }
+      applyRemoteConfiguration(data.remoteSource);
 
       const prepared = prepareAssets(Array.isArray(data.assets) ? data.assets : []);
       if (prepared.valid.length > 0) {
@@ -64,6 +204,7 @@
       }
     } catch (err) {
       console.error('Failed to load existing assets:', err);
+      applyRemoteConfiguration(null);
       if (assetsContainer.childElementCount === 0) {
         addAssetRow();
       }
@@ -77,11 +218,19 @@
     row.className = 'asset-row';
     row.dataset.assetId = String(assetCounter);
 
+    const header = document.createElement('div');
+    header.className = 'asset-row-header';
+
+    const title = document.createElement('span');
+    title.className = 'asset-row-title';
+    header.appendChild(title);
+
     const removeButton = document.createElement('button');
     removeButton.type = 'button';
     removeButton.className = 'remove-asset';
     removeButton.textContent = 'Remove';
     removeButton.addEventListener('click', () => removeAssetRow(row));
+    header.appendChild(removeButton);
 
     const fields = document.createElement('div');
     fields.className = 'asset-row-fields';
@@ -91,9 +240,10 @@
     fields.appendChild(buildInput('State / Province', 'asset-state', true, initialValues.state || ''));
     fields.appendChild(buildInput('Notes (optional)', 'asset-notes', false, initialValues.notes || '', true));
 
-    row.appendChild(removeButton);
+    row.appendChild(header);
     row.appendChild(fields);
     assetsContainer.appendChild(row);
+    updateAssetRowTitles();
   }
 
   function buildInput(labelText, inputName, required, value, isTextarea) {
@@ -120,11 +270,27 @@
 
   function removeAssetRow(row) {
     const rows = assetsContainer.querySelectorAll('.asset-row');
-    if (rows.length <= 1) {
-      showToast('Keep at least one asset. Add another before removing this one.', true);
+    if (rows.length <= 1 && !isRemoteEnabled()) {
+      const fields = row.querySelectorAll('input[type="text"], textarea');
+      fields.forEach(field => {
+        field.value = '';
+      });
+      updateAssetRowTitles();
+      showToast('Cleared the last asset entry. Add another or switch to External Source.', false);
       return;
     }
     assetsContainer.removeChild(row);
+    updateAssetRowTitles();
+  }
+
+  function updateAssetRowTitles() {
+    const rows = assetsContainer.querySelectorAll('.asset-row');
+    rows.forEach((row, index) => {
+      const title = row.querySelector('.asset-row-title');
+      if (title) {
+        title.textContent = `Asset ${index + 1}`;
+      }
+    });
   }
 
   async function handleSubmit(event) {
@@ -209,19 +375,25 @@
       throw new Error('Import did not produce any assets.');
     }
 
+    applyRemoteConfiguration(result.remoteSource);
+
     const appliedCount = setAssets(result.assets);
     if (titleField && typeof result.title === 'string' && result.title.trim()) {
       titleField.value = result.title.trim();
     }
 
-    if (appliedCount === 0) {
+    if (appliedCount === 0 && !isRemoteEnabled()) {
       showToast('No valid assets found in the imported file.', true);
       return;
     }
 
     const skippedSuffix = result.skipped ? ` (${result.skipped} skipped)` : '';
     const suffix = appliedCount === 1 ? '' : 's';
-    showToast(`Imported ${appliedCount} asset${suffix} from ${filename}${skippedSuffix}.`);
+    if (appliedCount > 0) {
+      showToast(`Imported ${appliedCount} asset${suffix} from ${filename}${skippedSuffix}.`);
+    } else if (isRemoteEnabled()) {
+      showToast('Imported API configuration.', false);
+    }
   }
 
   function handleExportJson() {
@@ -234,13 +406,19 @@
     const fileName = buildFileName(payload.title, 'json');
     const content = JSON.stringify(payload, null, 2);
     downloadFile(fileName, content, 'application/json');
-    showToast(`Exported ${payload.assets.length} asset${payload.assets.length === 1 ? '' : 's'} to ${fileName}.`);
+    const apiSuffix = payload.remoteSource && payload.remoteSource.enabled ? ' (API settings included)' : '';
+    showToast(`Exported ${payload.assets.length} asset${payload.assets.length === 1 ? '' : 's'} to ${fileName}${apiSuffix}.`);
   }
 
   function handleExportCsv() {
     const payload = collectPayload({ silent: true });
     if (!payload) {
       showToast('Add a title and at least one complete asset before exporting.', true);
+      return;
+    }
+
+    if (payload.assets.length === 0) {
+      showToast('No local assets to export. Add manual assets or disable the API option.', true);
       return;
     }
 
@@ -253,12 +431,29 @@
   function collectPayload(options = {}) {
     const { silent = false } = options;
     const title = titleField ? titleField.value.trim() : '';
+    const remoteEnabled = isRemoteEnabled();
+    const remoteUrl = remoteUrlField ? remoteUrlField.value.trim() : '';
 
     if (!title) {
       if (!silent) {
         showToast('Map title is required.', true);
       }
       return null;
+    }
+
+    if (remoteEnabled) {
+      if (!remoteUrl) {
+        if (!silent) {
+          showToast('Enter the JSON API URL to fetch assets.', true);
+        }
+        return null;
+      }
+      if (!isValidHttpUrl(remoteUrl)) {
+        if (!silent) {
+          showToast('Enter a valid http(s) JSON API URL.', true);
+        }
+        return null;
+      }
     }
 
     const assets = [];
@@ -280,20 +475,29 @@
       }
     });
 
-    if (assets.length === 0) {
+    if (assets.length === 0 && !remoteEnabled) {
       if (!silent) {
         showToast('Add at least one complete asset (name, city, state).', true);
       }
       return null;
     }
 
-    return { title, assets };
+    return {
+      title,
+      assets,
+      remoteSource: {
+        enabled: remoteEnabled,
+        url: remoteUrl
+      }
+    };
   }
 
   function setAssets(assets) {
     resetAssetRows();
     if (!Array.isArray(assets) || assets.length === 0) {
-      addAssetRow();
+      if (!isRemoteEnabled()) {
+        addAssetRow();
+      }
       return 0;
     }
     assets.forEach(asset => addAssetRow(asset));
@@ -356,7 +560,8 @@
     }
 
     const collection = extractAssetCollection(data);
-    if (collection.assets.length === 0) {
+    const hasRemote = Boolean(collection.remoteSource && collection.remoteSource.enabled);
+    if (collection.assets.length === 0 && !hasRemote) {
       throw new Error('JSON file does not contain any complete assets.');
     }
     return collection;
@@ -374,9 +579,22 @@
     }
   }
 
+  function normalizeRemoteSource(source) {
+    if (!source || typeof source !== 'object') {
+      return null;
+    }
+    const enabled = Boolean(source.enabled);
+    const url = typeof source.url === 'string' ? source.url.trim() : '';
+    if (enabled && !isValidHttpUrl(url)) {
+      return { enabled: false, url };
+    }
+    return { enabled, url };
+  }
+
   function extractAssetCollection(input) {
     let title = '';
     let rawAssets = [];
+    let remoteSource = null;
 
     if (Array.isArray(input)) {
       rawAssets = input;
@@ -392,10 +610,11 @@
           rawAssets = input[candidates[0]];
         }
       }
+      remoteSource = normalizeRemoteSource(input.remoteSource);
     }
 
     const prepared = prepareAssets(rawAssets);
-    return { title, assets: prepared.valid, skipped: prepared.skipped };
+    return { title, assets: prepared.valid, skipped: prepared.skipped, remoteSource };
   }
 
   function parseCsvPayload(rawText) {
@@ -536,6 +755,18 @@
     const baseTitle = title ? title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') : '';
     const safeTitle = baseTitle ? baseTitle.slice(0, 60) : 'map-assets';
     return `${safeTitle}.${extension}`;
+  }
+
+  function isValidHttpUrl(candidate) {
+    if (!candidate) {
+      return false;
+    }
+    try {
+      const parsed = new URL(candidate);
+      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    } catch (err) {
+      return false;
+    }
   }
 
   function downloadFile(filename, content, mimeType) {

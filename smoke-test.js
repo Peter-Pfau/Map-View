@@ -52,6 +52,44 @@ const backupData = backupExists ? fs.readFileSync(DATA_FILE) : null;
     throw new Error('Payload mismatch when reading assets back');
   }
 
+  const remotePayload = {
+    title: 'Remote Source Map',
+    assets: [],
+    remoteSource: {
+      enabled: true,
+      url: 'https://example.com/assets.json'
+    }
+  };
+
+  const remotePostResponse = await httpRequest({
+    ...baseOptions,
+    path: '/api/assets',
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  }, JSON.stringify(remotePayload));
+
+  if (remotePostResponse.statusCode !== 201) {
+    throw new Error(`Expected 201 when saving remote configuration, received ${remotePostResponse.statusCode}`);
+  }
+
+  const remoteGetResponse = await httpRequest({ ...baseOptions, path: '/api/assets', method: 'GET' });
+  if (remoteGetResponse.statusCode !== 200) {
+    throw new Error(`Expected 200 when retrieving remote-configured assets, received ${remoteGetResponse.statusCode}`);
+  }
+
+  const remoteData = JSON.parse(remoteGetResponse.body);
+  if (!remoteData.remoteSource || !remoteData.remoteSource.enabled) {
+    throw new Error('Remote configuration flag not persisted');
+  }
+  if (remoteData.remoteSource.url !== remotePayload.remoteSource.url) {
+    throw new Error('Remote configuration URL not persisted');
+  }
+  if (!Array.isArray(remoteData.assets) || remoteData.assets.length !== 0) {
+    throw new Error('Remote configuration should persist an empty asset array when API is enabled');
+  }
+
   console.log('Smoke test passed.');
 })()
   .catch(err => {
