@@ -23,7 +23,7 @@
   </header>
 
   <main class="content config-content">
-    <form id="config-form" class="config-form">
+    <form id="config-form" class="config-form" novalidate>
       <section>
         <label for="map-title" class="input-label">Map Title</label>
         <input id="map-title" name="title" type="text" required placeholder="Example: North America Infrastructure" />
@@ -59,9 +59,17 @@
                 <button type="button" id="remote-export-json" class="secondary" data-export-target="json">Export JSON</button>
                 <button type="button" id="remote-export-csv" class="secondary" data-export-target="csv">Export CSV</button>
               </div>
-              <label for="api-url" class="input-label">API URL</label>
-              <input id="api-url" name="apiUrl" type="url" placeholder="https://example.com/assets.json" autocomplete="off" />
-              <p class="helper-text">The endpoint should return JSON containing either an <code>assets</code> array or an array of asset objects. Try <code>http://localhost:3000/api/test-assets</code> for sample data.</p>
+              <div class="label-with-info">
+                <label for="api-url" class="input-label">API URL</label>
+                <button type="button" id="api-format-info" class="info-icon" aria-label="Show API format information" title="Show API format information">
+                  <span aria-hidden="true">ℹ️</span>
+                </button>
+              </div>
+              <div class="api-url-group">
+                <input id="api-url" name="apiUrl" type="url" placeholder="https://example.com/assets.json" autocomplete="off" />
+                <button type="button" id="test-connection" class="secondary test-connection-btn">Test Connection</button>
+              </div>
+              <p class="helper-text">The endpoint should return JSON containing either an <code>assets</code> array or an array of asset objects. Try <code>https://localhost:3050/api/test-assets</code> for sample data.</p>
             </div>
           </div>
         </div>
@@ -74,6 +82,70 @@
   </main>
 
   <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- API Format Info Modal -->
+  <div id="api-format-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true">
+    <div class="modal-backdrop" data-modal-dismiss></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h2 id="modal-title">API Response Format</h2>
+        <button type="button" id="modal-close" class="modal-close" aria-label="Close modal">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>Your API endpoint should return JSON data in one of these formats:</p>
+        
+        <h3>Format 1: Simple Array</h3>
+        <pre><code>[
+  {
+    "name": "HQ - Seattle",
+    "city": "Seattle", 
+    "state": "WA",
+    "ip": "10.1.1.100",
+    "notes": "Global headquarters"
+  },
+  {
+    "name": "Edge Node - Portland",
+    "city": "Portland",
+    "state": "OR",
+    "ip": "10.2.1.50", 
+    "notes": "Pacific Northwest edge site"
+  }
+]</code></pre>
+
+        <h3>Format 2: Object with Assets Array</h3>
+        <pre><code>{
+  "title": "My Infrastructure Map",
+  "assets": [
+    {
+      "name": "HQ - Seattle",
+      "city": "Seattle",
+      "state": "WA",
+      "ip": "10.1.1.100", 
+      "notes": "Global headquarters"
+    }
+  ]
+}</code></pre>
+
+        <h3>Required Fields</h3>
+        <ul>
+          <li><strong>name</strong> (or Name, hostname, Hostname) - Asset name or identifier</li>
+          <li><strong>city</strong> (or City, location, Location) - City where the asset is located</li>
+          <li><strong>state</strong> (or State, region, Region) - State/Province code (e.g., "CA", "TX", "ON")</li>
+        </ul>
+
+        <h3>Optional Fields</h3>
+        <ul>
+          <li><strong>ip</strong> (or IP, ipAddress, IPAddress) - IP address of the asset (e.g., "10.1.1.100", "192.168.1.50")</li>
+          <li><strong>notes</strong> (or Notes, description, Description) - Description or additional information</li>
+          <li><strong>title</strong> - Map title (only used in Format 2)</li>
+        </ul>
+
+        <p class="note"><strong>Note:</strong> The API should return proper JSON with <code>Content-Type: application/json</code> header. Field names are case-insensitive and support common variations.</p>
+      </div>
+    </div>
+  </div>
 
   <script src="/static/js/theme.js" defer></script>
   <script src="/static/js/configure.js" defer></script>

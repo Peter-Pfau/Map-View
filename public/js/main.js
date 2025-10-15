@@ -1,8 +1,8 @@
 (function () {
   'use strict';
 
-  const DEFAULT_CENTER = [39.5, -98.35];
-  const DEFAULT_ZOOM = 4;
+  const DEFAULT_CENTER = [39.8, -98.5]; // Continental US center
+  const DEFAULT_ZOOM = 6; // Zoom focused on continental US
   const tileLayerConfig = {
     attribution: '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors'
   };
@@ -17,6 +17,13 @@
   const actionsMenu = document.getElementById('actions-menu');
   const assetListOverlay = document.getElementById('asset-list-overlay');
   const assetListCloseButton = document.getElementById('asset-list-close');
+  
+  // Loading indicator elements
+  const loadingIndicator = document.getElementById('loading-indicator');
+  const loadingTitle = document.getElementById('loading-title');
+  const loadingStatus = document.getElementById('loading-status');
+  const loadingProgressBar = document.getElementById('loading-progress-bar');
+  const loadingDetails = document.getElementById('loading-details');
 
   if (actionsToggle && actionsMenu) {
     actionsToggle.addEventListener('click', toggleMenu);
@@ -32,6 +39,34 @@
   }
 
   fetchAssets();
+
+  function showLoadingIndicator(title = 'Loading...', status = 'Please wait...') {
+    if (loadingIndicator) {
+      loadingIndicator.setAttribute('aria-hidden', 'false');
+      if (loadingTitle) loadingTitle.textContent = title;
+      if (loadingStatus) loadingStatus.textContent = status;
+      if (loadingProgressBar) loadingProgressBar.style.width = '0%';
+      if (loadingDetails) loadingDetails.textContent = '';
+    }
+  }
+
+  function updateLoadingProgress(percentage, status = '', details = '') {
+    if (loadingProgressBar) {
+      loadingProgressBar.style.width = `${Math.max(0, Math.min(100, percentage))}%`;
+    }
+    if (status && loadingStatus) {
+      loadingStatus.textContent = status;
+    }
+    if (details && loadingDetails) {
+      loadingDetails.textContent = details;
+    }
+  }
+
+  function hideLoadingIndicator() {
+    if (loadingIndicator) {
+      loadingIndicator.setAttribute('aria-hidden', 'true');
+    }
+  }
 
   function toggleMenu(event) {
     if (!actionsToggle || !actionsMenu) {
@@ -116,9 +151,14 @@
     }
   }
   async function fetchAssets() {
+    showLoadingIndicator('Loading Assets...', 'Fetching asset configuration...');
+    
     try {
+      updateLoadingProgress(10, 'Loading configuration...', 'Reading asset configuration file');
+      
       const response = await fetch('/api/assets', { cache: 'no-store' });
       if (response.status === 404) {
+        hideLoadingIndicator();
         window.location.href = '/configure';
         return;
       }
@@ -126,13 +166,24 @@
         throw new Error(`Unexpected response: ${response.status}`);
       }
 
+      updateLoadingProgress(25, 'Configuration loaded', 'Processing asset sources...');
+      
       const rawData = await response.json();
       const resolvedData = await resolveAssetSource(rawData);
+      
+      updateLoadingProgress(60, 'Assets loaded', 'Preparing map visualization...');
+      
       renderTitle(resolvedData.title);
       renderAssetsList(resolvedData.assets, resolvedData.remoteSource);
-      initializeMap(resolvedData);
+      
+      updateLoadingProgress(70, 'Initializing map...', 'Setting up interactive map');
+      
+      await initializeMap(resolvedData);
+      
+      hideLoadingIndicator();
     } catch (err) {
       console.error('Failed to load assets:', err);
+      hideLoadingIndicator();
       showToast('Unable to load assets. Try refreshing or reconfiguring.', true);
       if (listEl) {
         listEl.innerHTML = '<li class="asset-card">No assets available. Please configure your map.</li>';
@@ -217,6 +268,13 @@
       meta.textContent = [asset.city, asset.state].filter(Boolean).join(', ');
       item.appendChild(meta);
 
+      if (asset.ip) {
+        const ip = document.createElement('p');
+        ip.className = 'asset-ip';
+        ip.textContent = `IP: ${asset.ip}`;
+        item.appendChild(ip);
+      }
+
       if (asset.notes) {
         const notes = document.createElement('p');
         notes.className = 'asset-notes';
@@ -234,7 +292,12 @@
 
     if (remoteSource.enabled) {
       try {
+        updateLoadingProgress(30, 'Connecting to external API...', `Fetching data from ${remoteSource.url}`);
+        
         const remoteAssets = await fetchRemoteAssets(remoteSource.url);
+        
+        updateLoadingProgress(50, 'External data loaded', `Received ${remoteAssets.length} assets from API`);
+        
         if (remoteAssets.length > 0) {
           return {
             ...data,
@@ -250,6 +313,8 @@
         }
       } catch (err) {
         console.error('Remote asset fetch failed:', err);
+        updateLoadingProgress(45, 'API connection failed', 'Using locally saved assets...');
+        
         if (localAssets.length > 0) {
           showToast('Unable to load assets from the configured API. Showing previously saved assets.', true);
         } else {
@@ -266,12 +331,27 @@
   }
 
   async function fetchRemoteAssets(url) {
-    const response = await fetch(url, { cache: 'no-store' });
+    // Use server-side proxy to avoid CORS issues
+    const response = await fetch('/api/test-connection', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ url: url })
+    });
+    
     if (!response.ok) {
-      throw new Error(`Remote API responded with ${response.status}`);
+      const errorData = await response.json();
+      throw new Error(errorData.error || `Proxy responded with ${response.status}`);
     }
-    const payload = await response.json();
-    const rawAssets = extractAssetArray(payload);
+    
+    const proxyResult = await response.json();
+    
+    if (proxyResult.status !== 200) {
+      throw new Error(`Remote API responded with ${proxyResult.status}`);
+    }
+    
+    const rawAssets = extractAssetArray(proxyResult.data);
     return sanitizeAssets(rawAssets);
   }
 
@@ -300,12 +380,13 @@
       if (!item || typeof item !== 'object') {
         return;
       }
-      const name = toCleanString(item.name);
-      const city = toCleanString(item.city);
-      const state = toCleanString(item.state);
-      const notes = toCleanString(item.notes, true);
+      const name = toCleanString(item.name || item.Name || item.hostname || item.Hostname);
+      const city = toCleanString(item.city || item.City || item.location || item.Location);
+      const state = toCleanString(item.state || item.State || item.region || item.Region);
+      const ip = toCleanString(item.ip || item.IP || item.ipAddress || item.IPAddress, true);
+      const notes = toCleanString(item.notes || item.Notes || item.description || item.Description, true);
       if (name && city && state) {
-        result.push({ name, city, state, notes });
+        result.push({ name, city, state, ip, notes });
       }
     });
     return result;
@@ -358,6 +439,8 @@
       return;
     }
 
+    updateLoadingProgress(75, 'Creating map...', 'Initializing interactive map');
+
     const map = L.map('map', {
       zoomControl: true,
       scrollWheelZoom: true
@@ -367,8 +450,20 @@
 
     const bounds = L.latLngBounds();
     const groupedAssets = new Map();
+    const totalAssets = data.assets.length;
+    
+    updateLoadingProgress(80, 'Geocoding locations...', `Processing ${totalAssets} assets`);
 
-    for (const asset of data.assets) {
+    for (let i = 0; i < data.assets.length; i++) {
+      const asset = data.assets[i];
+      const progress = 80 + (15 * (i / totalAssets)); // Progress from 80% to 95%
+      
+      updateLoadingProgress(
+        progress, 
+        'Geocoding locations...', 
+        `Processing ${asset.name} (${i + 1}/${totalAssets})`
+      );
+      
       try {
         const coords = await geocodeAsset(asset.city, asset.state);
         if (coords) {
@@ -382,8 +477,12 @@
       } catch (err) {
         console.error('Geocoding error:', err);
       }
-      await sleep(250);
+      
+      // Reduced sleep time from 250ms to 50ms for better UX while still respecting rate limits
+      await sleep(50);
     }
+
+    updateLoadingProgress(95, 'Adding map markers...', `Creating ${groupedAssets.size} map markers`);
 
     for (const [key, group] of groupedAssets.entries()) {
       const markerOptions = {};
@@ -432,8 +531,35 @@
     map.on('click', () => collapseDetailLayer(map, groupedAssets, overviewBounds));
 
     const markerCount = groupedAssets.size;
+    
+    updateLoadingProgress(100, 'Map ready!', `Successfully loaded ${markerCount} locations`);
+    
     if (markerCount > 0) {
-      map.fitBounds(bounds.pad(0.2));
+      // Define continental US bounds to constrain the view
+      const continentalUSBounds = L.latLngBounds(
+        [24.5, -125.0], // Southwest: Southern California/Mexico border
+        [49.0, -66.0]   // Northeast: Maine/Canada border
+      );
+      
+      // Constrain the asset bounds to continental US
+      const constrainedBounds = L.latLngBounds();
+      let hasUSAssets = false;
+      
+      // Only include assets within continental US bounds
+      for (const [key, group] of groupedAssets.entries()) {
+        if (continentalUSBounds.contains(group.coords)) {
+          constrainedBounds.extend(group.coords);
+          hasUSAssets = true;
+        }
+      }
+      
+      if (hasUSAssets) {
+        // Fit to continental US assets with padding
+        map.fitBounds(constrainedBounds.pad(0.1));
+      } else {
+        // Fallback to default US view if no US assets
+        map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+      }
     } else {
       map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
       showToast('Unable to plot any assets. Check that city/state values are valid.', true);
@@ -521,14 +647,26 @@
     }
     if (assets.length === 1) {
       const asset = assets[0];
-      const base = `<strong>${escapeHtml(asset.name)}</strong><br/>${escapeHtml(asset.city)}, ${escapeHtml(asset.state)}`;
-      return asset.notes ? `${base}<br/><em>${escapeHtml(asset.notes)}</em>` : base;
+      let content = `<strong>${escapeHtml(asset.name)}</strong><br/>${escapeHtml(asset.city)}, ${escapeHtml(asset.state)}`;
+      if (asset.ip) {
+        content += `<br/>IP: ${escapeHtml(asset.ip)}`;
+      }
+      if (asset.notes) {
+        content += `<br/><em>${escapeHtml(asset.notes)}</em>`;
+      }
+      return content;
     }
     const location = [assets[0].city, assets[0].state].filter(Boolean).map(escapeHtml).join(', ');
     const list = assets
       .map(asset => {
-        const notes = asset.notes ? ` - ${escapeHtml(asset.notes)}` : '';
-        return `<li><strong>${escapeHtml(asset.name)}</strong>${notes}</li>`;
+        let details = escapeHtml(asset.name);
+        if (asset.ip) {
+          details += ` (${escapeHtml(asset.ip)})`;
+        }
+        if (asset.notes) {
+          details += ` - ${escapeHtml(asset.notes)}`;
+        }
+        return `<li><strong>${details}</strong></li>`;
       })
       .join('');
     const locationLine = location ? `${location}<br/>` : '';

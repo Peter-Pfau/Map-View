@@ -35,6 +35,20 @@
     <section class="map-panel">
       <div class="map-wrapper">
         <div id="map" class="map"></div>
+        <div id="loading-indicator" class="loading-indicator" aria-hidden="true">
+          <div class="loading-indicator__backdrop"></div>
+          <div class="loading-indicator__dialog">
+            <div class="loading-indicator__content">
+              <div class="loading-spinner"></div>
+              <h3 id="loading-title">Loading Assets...</h3>
+              <p id="loading-status">Initializing...</p>
+              <div class="loading-progress">
+                <div id="loading-progress-bar" class="loading-progress-bar" style="width: 0%"></div>
+              </div>
+              <p id="loading-details" class="loading-details"></p>
+            </div>
+          </div>
+        </div>
         <div id="asset-list-overlay" class="asset-list-overlay" aria-hidden="true">
           <div class="asset-list-overlay__backdrop" data-overlay-dismiss></div>
           <aside class="asset-list-overlay__dialog" role="dialog" aria-modal="true" aria-labelledby="asset-list-title">
