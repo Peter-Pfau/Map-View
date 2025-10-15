@@ -24,6 +24,9 @@
   const loadingStatus = document.getElementById('loading-status');
   const loadingProgressBar = document.getElementById('loading-progress-bar');
   const loadingDetails = document.getElementById('loading-details');
+  
+  // Asset count badge
+  const assetCountEl = document.getElementById('asset-count');
 
   if (actionsToggle && actionsMenu) {
     actionsToggle.addEventListener('click', toggleMenu);
@@ -242,6 +245,11 @@
     }
     const safeAssets = Array.isArray(assets) ? assets : [];
     listEl.innerHTML = '';
+
+    // Update asset count badge
+    if (assetCountEl) {
+      assetCountEl.textContent = safeAssets.length.toLocaleString();
+    }
 
     if (safeAssets.length === 0) {
       const emptyItem = document.createElement('li');
