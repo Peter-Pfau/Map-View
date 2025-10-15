@@ -452,39 +452,119 @@
     const groupedAssets = new Map();
     const totalAssets = data.assets.length;
     
-    updateLoadingProgress(80, 'Geocoding locations...', `Processing ${totalAssets} assets`);
+    updateLoadingProgress(80, 'Optimizing locations...', 'Grouping assets by location');
 
-    for (let i = 0; i < data.assets.length; i++) {
-      const asset = data.assets[i];
-      const progress = 80 + (15 * (i / totalAssets)); // Progress from 80% to 95%
+    // Group assets by unique city/state combinations for efficient geocoding
+    const locationGroups = new Map();
+    data.assets.forEach(asset => {
+      const city = (asset.city || asset.City || '').trim();
+      const state = (asset.state || asset.State || '').trim();
+      const locationKey = `${city}, ${state}`.toLowerCase();
+      
+      if (!locationGroups.has(locationKey)) {
+        locationGroups.set(locationKey, {
+          city: city,
+          state: state,
+          assets: []
+        });
+      }
+      locationGroups.get(locationKey).assets.push(asset);
+    });
+
+    const uniqueLocations = Array.from(locationGroups.values());
+    const totalLocations = uniqueLocations.length;
+    
+    updateLoadingProgress(82, 'Geocoding locations...', `Processing ${totalLocations} unique locations (${totalAssets} assets)`);
+
+    // Process locations in small batches for better performance
+    const batchSize = 5;
+    let processedLocations = 0;
+
+    for (let i = 0; i < uniqueLocations.length; i += batchSize) {
+      const batch = uniqueLocations.slice(i, i + batchSize);
+      
+      // Process batch in parallel
+      const geocodePromises = batch.map(async (locationGroup) => {
+        try {
+          const coords = await geocodeAsset(locationGroup.city, locationGroup.state);
+          if (coords) {
+            // Round coordinates aggressively to force clustering
+            const roundedLat = Math.round(coords[0] * 20) / 20; // Round to nearest 0.05 degrees (~5.5km)
+            const roundedLon = Math.round(coords[1] * 20) / 20;
+            const roundedCoords = [roundedLat, roundedLon];
+            
+            const key = formatCoordinateKey(roundedCoords);
+            const group = groupedAssets.get(key) || { coords: roundedCoords, assets: [] };
+            group.assets.push(...locationGroup.assets);
+            groupedAssets.set(key, group);
+          } else {
+            console.warn(`No coordinates found for ${locationGroup.city}, ${locationGroup.state}`);
+          }
+        } catch (err) {
+          console.error('Geocoding error:', err);
+        }
+      });
+
+      await Promise.all(geocodePromises);
+      
+      processedLocations += batch.length;
+      const progress = 82 + (13 * (processedLocations / totalLocations)); // Progress from 82% to 95%
       
       updateLoadingProgress(
         progress, 
         'Geocoding locations...', 
-        `Processing ${asset.name} (${i + 1}/${totalAssets})`
+        `Processed ${processedLocations}/${totalLocations} locations (${groupedAssets.size} map points)`
       );
       
-      try {
-        const coords = await geocodeAsset(asset.city, asset.state);
-        if (coords) {
-          const key = formatCoordinateKey(coords);
-          const group = groupedAssets.get(key) || { coords, assets: [] };
-          group.assets.push(asset);
-          groupedAssets.set(key, group);
-        } else {
-          console.warn(`No coordinates found for ${asset.name}`);
-        }
-      } catch (err) {
-        console.error('Geocoding error:', err);
+      // Short delay between batches to respect rate limits
+      if (i + batchSize < uniqueLocations.length) {
+        await sleep(25);
       }
-      
-      // Reduced sleep time from 250ms to 50ms for better UX while still respecting rate limits
-      await sleep(50);
     }
 
     updateLoadingProgress(95, 'Adding map markers...', `Creating ${groupedAssets.size} map markers`);
 
+    // Post-process to merge any markers that would visually overlap at current zoom
+    const finalGroups = new Map();
+    const currentZoom = map.getZoom();
+    const markerSizePixels = 38; // Base marker size
+    const minPixelDistance = markerSizePixels + 10; // Markers + 10px buffer
+    
     for (const [key, group] of groupedAssets.entries()) {
+      let merged = false;
+      
+      // Check if this group should be merged with an existing final group
+      for (const [finalKey, finalGroup] of finalGroups.entries()) {
+        // Convert geographic coordinates to pixel positions at current zoom
+        const point1 = map.latLngToContainerPoint(group.coords);
+        const point2 = map.latLngToContainerPoint(finalGroup.coords);
+        
+        // Calculate actual pixel distance
+        const pixelDistance = Math.sqrt(
+          Math.pow(point1.x - point2.x, 2) + Math.pow(point1.y - point2.y, 2)
+        );
+        
+        if (pixelDistance < minPixelDistance) {
+          // Merge into existing group - use center point between the two
+          const avgLat = (group.coords[0] + finalGroup.coords[0]) / 2;
+          const avgLon = (group.coords[1] + finalGroup.coords[1]) / 2;
+          finalGroup.coords = [avgLat, avgLon];
+          finalGroup.assets.push(...group.assets);
+          merged = true;
+          break;
+        }
+      }
+      
+      if (!merged) {
+        // Create new final group
+        finalGroups.set(key, { ...group });
+      }
+    }
+
+    console.log(`Merged ${groupedAssets.size} initial groups into ${finalGroups.size} final groups`);
+
+    // Create markers from final groups
+    for (const [key, group] of finalGroups.entries()) {
       const markerOptions = {};
       const groupIcon = buildGroupIcon(group.assets.length);
       if (groupIcon) {
@@ -500,6 +580,12 @@
       bounds.extend(group.coords);
     }
 
+    // Update groupedAssets to use final groups for click handlers
+    groupedAssets.clear();
+    for (const [key, group] of finalGroups.entries()) {
+      groupedAssets.set(key, group);
+    }
+
     const overviewBounds = L.latLngBounds(bounds.getSouthWest(), bounds.getNorthEast());
 
     for (const [key, group] of groupedAssets.entries()) {
@@ -510,7 +596,14 @@
           event.originalEvent.stopImmediatePropagation();
         }
         L.DomEvent.stopPropagation(event);
-        handleGroupClick(map, groupedAssets, key, overviewBounds);
+        
+        // Zoom in on the marker location
+        const currentZoom = map.getZoom();
+        const targetZoom = Math.min(currentZoom + 2, 18); // Zoom in by 2 levels, max 18
+        map.flyTo(group.coords, targetZoom, {
+          animate: true,
+          duration: 0.8
+        });
       });
 
       group.marker.on('dblclick', event => {
@@ -528,7 +621,29 @@
       });
     }
 
-    map.on('click', () => collapseDetailLayer(map, groupedAssets, overviewBounds));
+    map.on('click', () => {
+      // Collapse any expanded detail layers without flying to overview
+      const hadDetailLayer = Boolean(activeDetailLayer);
+
+      if (activeDetailLayer) {
+        map.removeLayer(activeDetailLayer);
+        activeDetailLayer = null;
+      }
+      if (activeGroupKey) {
+        const activeGroup = groupedAssets.get(activeGroupKey);
+        if (activeGroup && activeGroup.marker) {
+          setClusterMarkerExpanded(activeGroup.marker, false);
+          delete activeGroup.lastSpreadMultiplier;
+        }
+      }
+      activeGroupKey = null;
+      
+      // Reset view to continental US with wider zoom
+      map.flyTo(DEFAULT_CENTER, 5, {
+        animate: true,
+        duration: 1.0
+      });
+    });
 
     const markerCount = groupedAssets.size;
     
@@ -625,18 +740,57 @@
   }
 
   function formatCoordinateKey(coords) {
-    return coords.map(value => Number(value).toFixed(6)).join(',');
+    // Use the rounded coordinates directly for grouping
+    return coords.map(value => Number(value).toFixed(2)).join(',');
+  }
+
+  function findNearbyCluster(newCoords, existingGroups, maxDistanceKm = 0.5) {
+    // Very tight clustering (0.5km) to ensure touching circles are combined
+    // Find if there's an existing cluster within maxDistanceKm
+    for (const [key, group] of existingGroups.entries()) {
+      const distance = calculateDistance(newCoords, group.coords);
+      if (distance <= maxDistanceKm) {
+        return key; // Return existing cluster key
+      }
+    }
+    return null; // No nearby cluster found
+  }
+
+  function calculateDistance(coords1, coords2) {
+    // Calculate distance between two coordinates using Haversine formula
+    const [lat1, lon1] = coords1;
+    const [lat2, lon2] = coords2;
+    
+    const R = 6371; // Earth's radius in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+              
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c; // Distance in kilometers
   }
 
   function buildGroupIcon(count) {
     if (count <= 1) {
       return null;
     }
+    
+    // Use different color for 10+ assets
+    let className = 'asset-cluster';
+    let iconSize = [38, 38];
+    
+    if (count >= 10) {
+      className = 'asset-cluster asset-cluster--large';
+    }
+    
     return L.divIcon({
       html: `<span class="asset-cluster__inner">${count}</span>`,
-      className: 'asset-cluster',
-      iconSize: [38, 38],
-      iconAnchor: [19, 19],
+      className: className,
+      iconSize: iconSize,
+      iconAnchor: [iconSize[0] / 2, iconSize[1] / 2],
       popupAnchor: [0, -16]
     });
   }

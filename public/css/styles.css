@@ -201,6 +201,17 @@ body.theme-dark .asset-cluster__inner {
   box-shadow: var(--shadow-strong);
 }
 
+/* Yellow/gold color for clusters with 10+ assets */
+.asset-cluster--large .asset-cluster__inner {
+  background: #eab308; /* Yellow/gold for 10+ assets */
+  font-weight: 700;
+}
+
+/* Dark theme adjustment for large clusters */
+body.theme-dark .asset-cluster--large .asset-cluster__inner {
+  background: #eab308; /* Same yellow/gold in dark mode */
+}
+
 .popup-asset-list {
   margin: 0.5rem 0 0;
   padding-left: 1.1rem;
